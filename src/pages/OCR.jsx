@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Container, Row, Col, Card, Button, Alert, Badge, Form, ProgressBar, Spinner } from 'react-bootstrap';
 import { createWorker } from 'tesseract.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -13,6 +14,7 @@ const OCR = () => {
   const [progress, setProgress] = useState(0);
   const [kaydediliyor, setKaydediliyor] = useState(false);
   const [basariliMesaj, setBasariliMesaj] = useState('');
+  const [ocrMethod, setOcrMethod] = useState('tesseract'); // Tesseract varsayılan olsun, her zaman çalışır
   const fileInputRef = useRef(null);
 
   // Türkçe karakter düzeltme sözlüğü
@@ -26,13 +28,19 @@ const OCR = () => {
     'ö': /[o]/g,
     'İ': /[I1l|]/g,
     // Yaygın kelime hataları
-    'bugün': /bug[iıl1]n|bug[iıl1]+n/gi,
-    'bugün': /bugun/gi,
+    'bugün': /bug[iıl1]n|bug[iıl1]+n|bugun/gi,
     'için': /[iıl1]ç[iıl1]n|icin/gi,
     'şimdi': /s[iıl1]md[iıl1]|simdi/gi,
     'yarın': /yar[iıl1]n|yarin/gi,
     'geldi': /geld[iıl1]|geldi/gi,
     'gitti': /g[iıl1]tt[iıl1]|gitti/gi,
+    // Garip karakter kombinasyonları
+    'bölüyor': /bölülae|béltyolae|boluyor|boluyae/gi,
+    'geliyor': /geliyae|geliy0r|geliyor/gi,
+    'gidiyor': /gidiyae|gidiy0r|gidiyor/gi,
+    'ediyor': /ediyae|ediy0r|ediyor/gi,
+    'oluyor': /oluyae|oluy0r|oluyor/gi,
+    'yapıyor': /yapiyae|yapiy0r|yapiyor/gi,
   };
 
   // Metin düzeltme fonksiyonu
@@ -46,6 +54,24 @@ const OCR = () => {
       const regex = karakterDuzeltmeleri[dogruKelime];
       duzeltilmisMetin = duzeltilmisMetin.replace(regex, dogruKelime);
     });
+
+    // 1.5. Genel garip karakter temizleme
+    duzeltilmisMetin = duzeltilmisMetin
+      // "ae" soneklerini temizle
+      .replace(/ae\b/g, 'a')
+      .replace(/yae\b/g, 'ya')
+      .replace(/lae\b/g, 'la')
+      .replace(/mae\b/g, 'ma')
+      .replace(/nae\b/g, 'na')
+      // Garip karakter kombinasyonları
+      .replace(/0r\b/g, 'or')
+      .replace(/y0r\b/g, 'yor')
+      .replace(/[|]l/g, 'ıl')
+      .replace(/[|]n/g, 'ın')
+      .replace(/[|]m/g, 'ım')
+      // İkili karakterleri düzelt
+      .replace(/ll/g, 'ıl')
+      .replace(/nn/g, 'ın');
 
     // 2. Satır temizleme
     const temizMetin = duzeltilmisMetin
@@ -72,6 +98,122 @@ const OCR = () => {
     return temizMetin;
   };
 
+  // File'ı base64'e çeviren fonksiyon
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]); // data:image/jpeg;base64, kısmını çıkar
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Google Gemini ile OCR işlemi
+  const processImageWithGemini = async (imageFile) => {
+    try {
+      setProgress(20);
+      
+      // API anahtarı kontrolü
+      const apiKey = import.meta.env.VITE_GOOGLE_GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('Google Gemini API anahtarı bulunamadı. Lütfen .env dosyasına VITE_GOOGLE_GEMINI_API_KEY ekleyin.');
+      }
+
+      setProgress(40);
+      
+      // Dosyayı base64'e çevir
+      const base64Image = await fileToBase64(imageFile);
+      
+      setProgress(60);
+      
+      // Gemini AI'ı başlat
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      const prompt = `
+        Bu görüntüdeki metni en yüksek doğrulukla çıkar ve yazım hatalarını otomatik düzelt.
+        
+        YAZIМ HATASI DÜZELTMELERİ:
+        - Türkçe karakterleri doğru kullan: (ç,ğ,ı,İ,ö,ş,ü)
+        - Karışan harfleri düzelt: 1→ı, l→ı, I→İ, 0→o, c→ç, s→ş, u→ü, ae→a
+        - Türkçe kelime doğruluğunu kontrol et
+        - Yaygın yazım hatalarını düzelt: "gunun" → "günün", "icin" → "için", "simd" → "şimdi"
+        
+        KARAKTER DÜZELTMELERİ:
+        - "bugun" → "bugün"
+        - "yann" → "yarın" 
+        - "geldi1" → "geldin"
+        - "gitt1" → "gitti"
+        - "1c1n" → "için"
+        - "s1md1" → "şimdi"
+        - "bölülae" → "bölüyor"
+        - "béltyolae" → "bölüyor"
+        - "ae" sonekleri → "a" veya uygun Türkçe ek
+        - Garip karakter kombinasyonlarını mantıklı Türkçe kelimelerle değiştir
+        
+        TÜRKÇE KELIME KONTROLLÜ:
+        - Anlamlı Türkçe kelimeler oluştur
+        - Fiil çekimlerini doğru yap (-yor, -ar, -er, -ir)
+        - Ses uyumunu kontrol et
+        - Yanlış tanınan kelimeleri context'e göre düzelt
+        
+        DİKKAT EDİLECEKLER:
+        - Kelime aralarındaki boşlukları koru
+        - Noktalama işaretlerini düzgün yerleştir
+        - Sadece görüntüdeki metni ver, açıklama ekleme
+        - Anlamı koruyarak yazım hatalarını düzelt
+        - Garip harfler veya semboller varsa en yakın Türkçe karşılığını kullan
+        
+        Sonuç olarak temiz, doğru yazılmış, anlamlı Türkçe metin ver.
+      `;
+
+      setProgress(80);
+
+      const result = await model.generateContent([
+        prompt,
+        {
+          inlineData: {
+            mimeType: imageFile.type,
+            data: base64Image
+          }
+        }
+      ]);
+
+      const response = await result.response;
+      const text = response.text();
+
+      setProgress(100);
+      
+      return text.trim();
+    } catch (error) {
+      console.error('Gemini OCR hatası:', error);
+      throw new Error(`Gemini OCR işleminde hata: ${error.message}`);
+    }
+  };
+
+  // Tesseract ile OCR işlemi (mevcut)
+  const processImageWithTesseract = async (imageFile) => {
+    setProgress(10);
+    
+    const worker = await createWorker('tur+eng');
+    
+    setProgress(30);
+    
+    try {
+      setProgress(60);
+      const { data: { text } } = await worker.recognize(imageFile);
+      setProgress(90);
+      
+      await worker.terminate();
+      setProgress(100);
+      
+      return metniDuzelt(text);
+    } catch (error) {
+      await worker.terminate();
+      throw error;
+    }
+  };
+
   // Resim seçildiğinde
   const handleImageSelect = (event) => {
     const file = event.target.files[0];
@@ -89,44 +231,26 @@ const OCR = () => {
     setIsProcessing(true);
     setProgress(0);
     setExtractedText('');
+    setBasariliMesaj('');
 
     try {
-      const worker = await createWorker('tur+eng', 1, {
-        logger: m => {
-          if (m.status === 'recognizing text') {
-            setProgress(Math.round(m.progress * 100));
-          }
-        }
-      });
-
-      // OCR ayarlarını optimize et - daha iyi yazı tanıma için
-      await worker.setParameters({
-        tessedit_pageseg_mode: '6', // PSM 6: Uniform block of text (tek blok metin)
-        tessedit_ocr_engine_mode: '1', // OEM 1: Neural nets LSTM only (daha iyi)
-        preserve_interword_spaces: '1', // Kelimeler arası boşlukları koru
-        tessedit_do_invert: '0', // Görüntü inversiyonu yapma
-        tessedit_write_images: '0', // Debug görüntüleri yazma
-        user_defined_dpi: '300', // DPI ayarı
-        textord_really_old_xheight: '0', // Yeni x-height hesaplaması
-        classify_enable_adaptive_matcher: '1', // Uyarlanabilir eşleyici
-        classify_enable_learning: '1', // Öğrenmeyi etkinleştir
-        textord_noise_area_ratio: '0.3', // Gürültü oranını düşür
-        textord_noise_sizelimit: '0.2', // Gürültü boyut sınırını düşür
-        textord_heavy_nr: '1', // Ağır gürültü temizleme
-        language_model_penalty_non_freq_dict_word: '0.1', // Sözlükte olmayan kelimeler için düşük ceza
-        language_model_penalty_non_dict_word: '0.15', // Sözlükte olmayan kelimeler
-      });
-
-      const { data: { text } } = await worker.recognize(selectedImage);
+      let text = '';
       
-      // Metni düzelt ve temizle
-      const temizMetin = metniDuzelt(text);
+      if (ocrMethod === 'gemini') {
+        text = await processImageWithGemini(selectedImage);
+      } else {
+        text = await processImageWithTesseract(selectedImage);
+      }
 
-      setExtractedText(temizMetin);
-      await worker.terminate();
+      setExtractedText(text);
+      
+      if (text.trim()) {
+        const methodName = ocrMethod === 'gemini' ? 'Gemini AI (yazım hatası düzeltildi)' : 'Tesseract';
+        setBasariliMesaj(`✅ Metin başarıyla ${methodName} ile çıkarıldı!`);
+      }
     } catch (error) {
-      console.error('OCR işlemi sırasında hata:', error);
-      alert('Resim işlenirken bir hata oluştu. Lütfen tekrar deneyin.');
+      console.error('OCR hatası:', error);
+      setExtractedText(`❌ Hata: ${error.message}`);
     } finally {
       setIsProcessing(false);
       setProgress(0);
@@ -254,6 +378,70 @@ const OCR = () => {
                     </Card.Body>
                   </Card>
 
+                  {/* OCR Method Seçimi */}
+                  <Card className="mb-4" style={{background: 'rgba(255, 255, 255, 0.9)', border: 'none'}}>
+                    <Card.Body>
+                      <h6 className="fw-bold mb-3 text-primary">🤖 OCR + Yazım Hatası Düzeltme Seçin</h6>
+                      <Row className="g-3">
+                        <Col md={6}>
+                          <Form.Check
+                            type="radio"
+                            id="gemini-radio"
+                            name="ocrMethod"
+                            label={
+                              <div>
+                                <strong>Google Gemini AI</strong>
+                                {import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ? (
+                                  <Badge bg="success" className="ms-2">Yazım Hatası Düzeltme</Badge>
+                                ) : (
+                                  <Badge bg="warning" className="ms-2">API Anahtarı Gerekli</Badge>
+                                )}
+                                <br />
+                                <small className="text-muted">
+                                  {import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ? 
+                                    '🚀 AI yazım hatası düzeltme + akıllı OCR' : 
+                                    '🔑 .env dosyasına API anahtarı ekleyin'
+                                  }
+                                </small>
+                              </div>
+                            }
+                            checked={ocrMethod === 'gemini'}
+                            onChange={() => setOcrMethod('gemini')}
+                            disabled={!import.meta.env.VITE_GOOGLE_GEMINI_API_KEY}
+                            className="p-3 border rounded"
+                            style={{
+                              background: ocrMethod === 'gemini' ? 'rgba(25, 135, 84, 0.1)' : 'transparent',
+                              borderColor: ocrMethod === 'gemini' ? '#198754' : '#dee2e6',
+                              opacity: !import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ? 0.6 : 1
+                            }}
+                          />
+                        </Col>
+                        <Col md={6}>
+                          <Form.Check
+                            type="radio"
+                            id="tesseract-radio"
+                            name="ocrMethod"
+                            label={
+                              <div>
+                                <strong>Tesseract OCR</strong>
+                                <Badge bg="primary" className="ms-2">Yerel & Hızlı</Badge>
+                                <br />
+                                <small className="text-muted">⚙️ İnternet gerektirmez, gizlilik odaklı</small>
+                              </div>
+                            }
+                            checked={ocrMethod === 'tesseract'}
+                            onChange={() => setOcrMethod('tesseract')}
+                            className="p-3 border rounded"
+                            style={{
+                              background: ocrMethod === 'tesseract' ? 'rgba(13, 110, 253, 0.1)' : 'transparent',
+                              borderColor: ocrMethod === 'tesseract' ? '#0d6efd' : '#dee2e6'
+                            }}
+                          />
+                        </Col>
+                      </Row>
+                    </Card.Body>
+                  </Card>
+
                   {/* İşlem butonları */}
                   <div className="d-flex flex-column flex-sm-row gap-3 justify-content-center mb-4">
                     <Button
@@ -273,10 +461,10 @@ const OCR = () => {
                       {isProcessing ? (
                         <div className="d-flex align-items-center">
                           <Spinner size="sm" className="me-2" />
-                          İşleniyor... {progress}%
+                          {ocrMethod === 'gemini' ? 'Gemini AI' : 'Tesseract'} ile işleniyor... {progress}%
                         </div>
                       ) : (
-                        '🔍 Metni Oku'
+                        `🔍 ${ocrMethod === 'gemini' ? 'Gemini AI' : 'Tesseract'} ile Metni Oku`
                       )}
                     </Button>
                   </div>
