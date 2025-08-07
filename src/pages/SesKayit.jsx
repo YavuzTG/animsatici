@@ -28,20 +28,47 @@ const SesKayit = () => {
     notlar: ''
   });
   const [sonİşlenenCevap, setSonİşlenenCevap] = useState(''); // Tekrar işlemeyi önlemek için
-  const [forceUpdate, setForceUpdate] = useState(0); // Force re-render için
   
-  // Dinleniyor state'ini force update et
+  // Component mount olduğunda mikrofon iznini önceden al
   useEffect(() => {
-    const interval = setInterval(() => {
-      setForceUpdate(prev => prev + 1);
-    }, 500); // Her 500ms'de bir re-render
+    const mikrofonHazirla = async () => {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          console.log('🎤 Mikrofon hazırlanıyor...');
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            } 
+          });
+          // Stream'i hemen kapat, sadece izin almak için
+          stream.getTracks().forEach(track => track.stop());
+          console.log('✅ Mikrofon hazır - hızlı başlatma aktif');
+        } catch (error) {
+          console.log('⚠️ Mikrofon ön hazırlık başarısız:', error.message);
+        }
+      }
+    };
     
-    return () => clearInterval(interval);
-  }, [asistanDurumu]);
+    // Sadece desteklenen tarayıcılarda çalıştır
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      mikrofonHazirla();
+    }
+  }, []);
   
   // Debug için dinleniyor state'ini takip et
   useEffect(() => {
     console.log('🔄 Dinleniyor state değişti:', dinleniyor);
+    // DOM debug - mikrofon açıldığında ekranın gözükme durumunu kontrol et
+    if (dinleniyor) {
+      console.log('🖥️ DOM Debug - Mikrofon açık, body styles:');
+      console.log('Body overflow:', document.body.style.overflow);
+      console.log('Body display:', document.body.style.display);
+      console.log('Body opacity:', document.body.style.opacity);
+      console.log('HTML overflow:', document.documentElement.style.overflow);
+      console.log('HTML display:', document.documentElement.style.display);
+    }
   }, [dinleniyor]);
 
   // Sesli tarihi düzenli formata çevir
@@ -159,7 +186,7 @@ const SesKayit = () => {
         
         const utterance = new SpeechSynthesisUtterance(metin);
         utterance.lang = 'tr-TR';
-        utterance.rate = 0.9;
+        utterance.rate = 1.3; // Hızlandırdık (0.9'dan 1.3'e)
         utterance.pitch = 1.0;
         
         // Konuşma bittiğinde resolve et
@@ -190,17 +217,11 @@ const SesKayit = () => {
     setSonİşlenenCevap(''); // Temizle
     setBasariliMesaj('');
     
-    // Konuşmayı bekle, kısa delay sonra dinlemeye geç
-    await konuş('Merhaba! Hangi konuda anımsatıcı oluşturmak istiyorsunuz? Mesela araba bakımı, toplantı, doktor randevusu gibi söyleyebilirsiniz...');
-    
-    console.log('⏰ Konuşma bitti, 300ms bekleyip dinleme başlatılıyor');
+    // Konuşma olmadan direkt mikrofonu aç
+    console.log('🎤 Direkt mikrofon açılıyor...');
     setTimeout(async () => {
-      console.log('⏰ İlk dinleme başlatılıyor...');
-      console.log('📊 İlk dinleme öncesi state - dinleniyor:', dinleniyor);
-      
-      // Hook'ta fresh start yapılıyor, extra retry'a gerek yok
       await dinlemeBaslat();
-      console.log('📊 İlk dinleme sonrası state - dinleniyor:', dinleniyor);
+      console.log('📊 Dinleme başladı - state:', dinleniyor);
     }, 100);
   };
 
@@ -234,18 +255,10 @@ const SesKayit = () => {
         setSonİşlenenCevap(''); // Yeni durum için temizle
         dinlemeDurdur();
         
-        // Konuşmayı bekle, kısa delay sonra dinlemeye geç
-        await konuş(`Anladım, ${cevap} için anımsatıcı oluşturuyorum. Bu işlem hangi tarihte yapılacak? Mesela yarın, gelecek hafta, 15 Ağustos gibi söyleyebilirsiniz.`);
-        
-        // Kısa bekleme sonra dinlemeye başla
+        // Direkt mikrofonu aç - konuşma yok
         setTimeout(async () => {
-          console.log('⏰ 100ms sonra tarih dinleme başlatılıyor...');
-          console.log('📊 Dinleme başlatmadan önceki state - dinleniyor:', dinleniyor);
-          
-          // Hook'ta fresh start yapılıyor
           await dinlemeBaslat();
-          console.log('📊 Dinleme başlattıktan sonraki state - dinleniyor:', dinleniyor);
-        }, 100);
+        }, 50);
         break;
 
       case 'tarih-soruyor':
@@ -257,12 +270,10 @@ const SesKayit = () => {
         
         console.log('📅 Sesli tarih:', cevap, '→ Düzenli tarih:', düzenliTarih);
         
-        await konuş(`Tarih olarak ${düzenliTarih} kaydedildi. Saat kaçta hatırlatmamı istiyorsunuz? Mesela sabah 9, öğleden sonra 2, akşam 7 gibi...`);
-        
-        // Kısa bekleme sonra dinlemeye başla
+        // Direkt saat sorma aşamasına geçip dinlemeye başla
         setTimeout(async () => {
           await dinlemeBaslat();
-        }, 500);
+        }, 50);
         break;
 
       case 'saat-soruyor':
@@ -274,12 +285,10 @@ const SesKayit = () => {
         
         console.log('🕐 Sesli saat:', cevap, '→ Düzenli saat:', düzenliSaat);
         
-        await konuş('Son olarak, bu konu hakkında eklemek istediğiniz özel bir not var mı? Yoksa hayır diyebilirsiniz.');
-        
-        // Kısa bekleme sonra dinlemeye başla
+        // Direkt not sorusuna geçip dinlemeye başla
         setTimeout(async () => {
           await dinlemeBaslat();
-        }, 500);
+        }, 50);
         break;
 
       case 'not-soruyor':
@@ -347,7 +356,7 @@ const SesKayit = () => {
         aktif: true
       });
       
-      await konuş(`Mükemmel! ${detaylar.baslik} anımsatıcınız ${detaylar.tarih} ${detaylar.saat} için kaydedildi. Başka bir anımsatıcı oluşturmak isterseniz tekrar başlat butonuna basabilirsiniz.`);
+      await konuş(`${detaylar.baslik} anımsatıcınız ${detaylar.tarih} ${detaylar.saat} için kaydedildi!`);
       setBasariliMesaj('✅ Sesli anımsatıcı başarıyla oluşturuldu!');
       
       setTimeout(() => {
@@ -359,7 +368,7 @@ const SesKayit = () => {
       
     } catch (error) {
       console.error('Sesli anımsatıcı kaydedilirken hata:', error);
-      await konuş('Üzgünüm, kaydederken bir hata oluştu. Lütfen tekrar deneyin.');
+      await konuş('Kaydederken hata oluştu. Tekrar deneyin.');
       setAsistanDurumu('bekliyor');
     } finally {
       setKaydediliyor(false);
@@ -610,7 +619,7 @@ const SesKayit = () => {
                               {dinleniyor ? '✅ AKTIF (MİKROFON AÇIK)' : '❌ PASIF (MİKROFON KAPALI)'}
                             </span>
                             <small className="d-block text-muted">
-                              Update: {new Date().toLocaleTimeString()} (#{forceUpdate})
+                              Update: {new Date().toLocaleTimeString()}
                             </small>
                           </li>
                         </ul>

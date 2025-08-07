@@ -8,7 +8,6 @@ import Auth from './pages/Auth';
 
 // Gerçek sayfaları import et
 import Animsaticilar from './pages/Animsaticilar';
-import SesKayit from './pages/SesKayit';
 import OCR from './pages/OCR';
 import Dosyalar from './pages/Dosyalar';
 
@@ -38,8 +37,6 @@ const AppContent = () => {
     switch(aktifSekme) {
       case 'animsaticilar':
         return <Animsaticilar />;
-      case 'ses-kayit':
-        return <SesKayit />;
       case 'ocr':
         return <OCR />;
       case 'dosyalar':

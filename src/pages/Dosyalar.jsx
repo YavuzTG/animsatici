@@ -81,12 +81,8 @@ const Dosyalar = () => {
     if (!yetkiVarMi('admin')) return;
     
     try {
-      const q = query(
-        collection(db, 'indirmeIstekleri'),
-        orderBy('olusturmaTarihi', 'desc')
-      );
-      
-      const querySnapshot = await getDocs(q);
+      // Basit query kullan, client-side'da sırala
+      const querySnapshot = await getDocs(collection(db, 'indirmeIstekleri'));
       const istekListesi = [];
       
       querySnapshot.forEach((doc) => {
@@ -96,7 +92,15 @@ const Dosyalar = () => {
         });
       });
       
+      // Client-side'da tarihe göre sırala
+      istekListesi.sort((a, b) => {
+        const dateA = a.olusturmaTarihi?.toDate?.() || new Date(0);
+        const dateB = b.olusturmaTarihi?.toDate?.() || new Date(0);
+        return dateB - dateA; // desc sıralama
+      });
+      
       setIndirmeIstekleri(istekListesi);
+      console.log('Admin istekleri yüklendi:', istekListesi.length);
     } catch (error) {
       console.error('İndirme istekleri yüklenirken hata:', error);
     }
@@ -107,10 +111,10 @@ const Dosyalar = () => {
     if (!kullanici || yetkiVarMi('admin')) return;
     
     try {
+      // Önce where ile filtrele, sonra client-side'da sırala
       const q = query(
         collection(db, 'indirmeIstekleri'),
-        where('isteyenId', '==', kullanici.uid),
-        orderBy('olusturmaTarihi', 'desc')
+        where('isteyenId', '==', kullanici.uid)
       );
       
       const querySnapshot = await getDocs(q);
@@ -123,7 +127,15 @@ const Dosyalar = () => {
         });
       });
       
+      // Client-side'da tarihe göre sırala
+      istekListesi.sort((a, b) => {
+        const dateA = a.olusturmaTarihi?.toDate?.() || new Date(0);
+        const dateB = b.olusturmaTarihi?.toDate?.() || new Date(0);
+        return dateB - dateA; // desc sıralama
+      });
+      
       setKullaniciIstekleri(istekListesi);
+      console.log('Kullanıcı istekleri yüklendi:', istekListesi.length);
     } catch (error) {
       console.error('Kullanıcı istekleri yüklenirken hata:', error);
     }
@@ -201,10 +213,30 @@ const Dosyalar = () => {
   const dosyaIndir = async (dosya) => {
     // Admin ise direkt indirebilir
     if (yetkiVarMi('admin')) {
-      const link = document.createElement('a');
-      link.href = dosya.base64Data || dosya.downloadURL;
-      link.download = dosya.dosyaAdi;
-      link.click();
+      try {
+        const link = document.createElement('a');
+        
+        // Base64 verisinin doğru formatında olduğundan emin ol
+        if (dosya.base64Data) {
+          link.href = dosya.base64Data;
+        } else if (dosya.downloadURL) {
+          link.href = dosya.downloadURL;
+        } else {
+          alert('Dosya verisi bulunamadı.');
+          return;
+        }
+        
+        link.download = dosya.dosyaAdi;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        console.log('Admin dosya indirme başlatıldı:', dosya.dosyaAdi);
+        
+      } catch (error) {
+        console.error('Admin dosya indirme hatası:', error);
+        alert('Dosya indirilemedi. Lütfen tekrar deneyin.');
+      }
       return;
     }
 
@@ -228,8 +260,14 @@ const Dosyalar = () => {
         olusturmaTarihi: new Date()
       });
 
+      console.log('İndirme isteği oluşturuldu:', indirmeOnayiIstenen.baslik);
+
       alert('İndirme isteğiniz admin onayına gönderildi. Onaylandıktan sonra dosyayı indirebileceksiniz.');
       setIndirmeOnayiIstenen(null);
+      
+      // Kullanıcı isteklerini hemen yenile
+      await kullaniciIstekleriniYukle();
+      
     } catch (error) {
       console.error('İndirme isteği gönderilirken hata:', error);
       alert('İstek gönderilirken bir hata oluştu.');
@@ -244,8 +282,12 @@ const Dosyalar = () => {
         onayTarihi: new Date()
       });
 
+      console.log('İstek onaylandı:', istekId);
       alert('İndirme isteği onaylandı!');
-      await indirmeIstekleriniYukle(); // İstekleri yenile
+      
+      // İstekleri yenile
+      await indirmeIstekleriniYukle();
+      
     } catch (error) {
       console.error('İstek onaylanırken hata:', error);
       alert('İstek onaylanırken bir hata oluştu.');
@@ -273,7 +315,10 @@ const Dosyalar = () => {
     try {
       // İstek bilgilerini al
       const istek = kullaniciIstekleri.find(i => i.id === istekId);
-      if (!istek) return;
+      if (!istek) {
+        alert('İstek bulunamadı.');
+        return;
+      }
 
       // Dosya bilgilerini al
       const dosya = dosyalar.find(d => d.id === istek.dosyaId);
@@ -283,10 +328,34 @@ const Dosyalar = () => {
       }
 
       // Dosyayı indir
-      const link = document.createElement('a');
-      link.href = dosya.base64Data || dosya.downloadURL;
-      link.download = dosya.dosyaAdi;
-      link.click();
+      try {
+        const link = document.createElement('a');
+        
+        // Base64 verisinin doğru formatında olduğundan emin ol
+        if (dosya.base64Data) {
+          link.href = dosya.base64Data;
+        } else if (dosya.downloadURL) {
+          link.href = dosya.downloadURL;
+        } else {
+          alert('Dosya verisi bulunamadı.');
+          return;
+        }
+        
+        link.download = dosya.dosyaAdi;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        console.log('Dosya indirme başlatıldı:', dosya.dosyaAdi);
+        
+        // İndirme başarılı olduğuna dair feedback
+        alert('Dosya indiriliyor... İndirme işlemi başlatıldı.');
+        
+      } catch (indirmeHatasi) {
+        console.error('Dosya indirme hatası:', indirmeHatasi);
+        alert('Dosya indirilemedi. Lütfen tekrar deneyin.');
+        return;
+      }
 
       // İsteği "indirildi" olarak işaretle
       await updateDoc(doc(db, 'indirmeIstekleri', istekId), {
@@ -294,11 +363,14 @@ const Dosyalar = () => {
         indirmeTarihi: new Date()
       });
 
+      console.log('İstek durumu güncellendi: indirildi');
+
       // Kullanıcı isteklerini yenile
       await kullaniciIstekleriniYukle();
+      
     } catch (error) {
       console.error('Dosya indirirken hata:', error);
-      alert('Dosya indirirken bir hata oluştu.');
+      alert('Dosya indirirken bir hata oluştu: ' + error.message);
     }
   };
   const dosyaSil = async (dosya) => {

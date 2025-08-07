@@ -3,16 +3,56 @@ import { Container, Row, Col, Card, Button, Form, Alert, Badge, Spinner, InputGr
 import { collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import Loading from '../components/Loading';
 
 const Animsaticilar = () => {
   const { kullanici } = useAuthContext();
+  const {
+    dinleniyor,
+    metin,
+    destekleniyor,
+    hata: sesHatasi,
+    mikrofonIzni,
+    dinlemeBaslat,
+    dinlemeDurdur,
+    metniSifirla
+  } = useSpeechRecognition();
+
   const [animsaticilar, setAnimsaticilar] = useState([]);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [yeniAnimsatici, setYeniAnimsatici] = useState('');
-  const [hedefTarih, setHedefTarih] = useState('');
+  const [hedefTarih, setHedefTarih] = useState(() => {
+    // Şu anki tarih-saati datetime-local formatında hazırla
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  });
   const [ekleniyor, setEkleniyor] = useState(false);
   const [hata, setHata] = useState('');
+
+  // Ses tanıma metnini otomatik olarak textarea'ya ekle
+  useEffect(() => {
+    if (metin && metin.trim().length > 0) {
+      setYeniAnimsatici(prev => {
+        // Eğer textarea boşsa direkt metni ekle
+        if (!prev.trim()) {
+          return metin;
+        }
+        // Eğer doluysa boşluk bırakıp ekle
+        return prev + ' ' + metin;
+      });
+      
+      // Metni temizle ki tekrar eklemesin
+      setTimeout(() => {
+        metniSifirla();
+      }, 100);
+    }
+  }, [metin]);
 
   // Anımsatıcıları yükle
   const animsaticilariYukle = async () => {
@@ -94,7 +134,14 @@ const Animsaticilar = () => {
       alert('✅ Not başarıyla eklendi!');
       
       setYeniAnimsatici('');
-      setHedefTarih('');
+      // Yeni anımsatıcı için şu anki tarih-saati ayarla
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      setHedefTarih(`${year}-${month}-${day}T${hours}:${minutes}`);
       await animsaticilariYukle();
     } catch (error) {
       console.error('❌ HATA DETAYI:', error);
@@ -144,7 +191,14 @@ const Animsaticilar = () => {
                   className="btn btn-primary btn-lg"
                   onClick={() => {
                     setYeniAnimsatici('');
-                    setHedefTarih('');
+                    // Şu anki tarih-saati yeniden ayarla
+                    const now = new Date();
+                    const year = now.getFullYear();
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    const hours = String(now.getHours()).padStart(2, '0');
+                    const minutes = String(now.getMinutes()).padStart(2, '0');
+                    setHedefTarih(`${year}-${month}-${day}T${hours}:${minutes}`);
                     document.querySelector('textarea')?.focus();
                   }}
                   style={{fontSize: '16px', padding: '12px 24px'}}
@@ -171,18 +225,76 @@ const Animsaticilar = () => {
               <form onSubmit={animsaticiEkle}>
                 <div className="mb-3">
                   <label className="form-label fw-bold">📝 Not İçeriği</label>
-                  <textarea
-                    className="form-control"
-                    rows={4}
-                    value={yeniAnimsatici}
-                    onChange={(e) => setYeniAnimsatici(e.target.value)}
-                    placeholder="Hatırlamak istediğiniz notu buraya yazın..."
-                    style={{
-                      fontSize: '16px',
-                      border: '2px solid #007bff',
-                      borderRadius: '8px'
-                    }}
-                  />
+                  <InputGroup>
+                    <textarea
+                      className="form-control"
+                      rows={4}
+                      value={yeniAnimsatici}
+                      onChange={(e) => setYeniAnimsatici(e.target.value)}
+                      placeholder="Hatırlamak istediğiniz notu buraya yazın veya mikrofona tıklayıp söyleyin..."
+                      style={{
+                        fontSize: '16px',
+                        border: '2px solid #007bff',
+                        borderRadius: '8px 0 0 8px',
+                        resize: 'vertical'
+                      }}
+                    />
+                    <div className="d-flex flex-column">
+                      <Button
+                        variant={dinleniyor ? "danger" : "outline-primary"}
+                        size="lg"
+                        className="d-flex align-items-center justify-content-center"
+                        style={{
+                          width: '60px',
+                          height: '100%',
+                          minHeight: '100px',
+                          border: '2px solid #007bff',
+                          borderRadius: '0 8px 8px 0',
+                          borderLeft: 'none'
+                        }}
+                        onClick={dinleniyor ? dinlemeDurdur : dinlemeBaslat}
+                        disabled={!destekleniyor || mikrofonIzni === false}
+                        title={dinleniyor ? "Ses kaydını durdur" : "Sesli not ekle"}
+                      >
+                        {dinleniyor ? (
+                          <span style={{fontSize: '1.5rem', animation: 'pulse 1s infinite'}}>🔴</span>
+                        ) : (
+                          <span style={{fontSize: '1.5rem'}}>🎤</span>
+                        )}
+                      </Button>
+                      
+                      {/* Ses tanıma durum göstergesi */}
+                      {dinleniyor && (
+                        <small className="text-success text-center mt-1" style={{fontSize: '10px'}}>
+                          DİNLİYOR
+                        </small>
+                      )}
+                      {sesHatasi && (
+                        <small className="text-danger text-center mt-1" style={{fontSize: '10px'}}>
+                          HATA
+                        </small>
+                      )}
+                    </div>
+                  </InputGroup>
+                  
+                  {/* Mikrofon durumu bilgilendirme */}
+                  {!destekleniyor && (
+                    <small className="text-warning d-block mt-2">
+                      ⚠️ Tarayıcınız ses tanıma özelliğini desteklemiyor
+                    </small>
+                  )}
+                  {mikrofonIzni === false && (
+                    <small className="text-danger d-block mt-2">
+                      ❌ Mikrofon izni verilmedi. Tarayıcı ayarlarından izin verin.
+                    </small>
+                  )}
+                  {dinleniyor && (
+                    <small className="text-info d-block mt-2">
+                      🎤 <strong>Dinliyorum...</strong> Konuşun, sözleriniz otomatik olarak yukarıya eklenecek. 
+                      <br />
+                      <em>Cümle tamamlandıktan 3 saniye sonra mikrofon kapanır.</em>
+                    </small>
+                  )}
                 </div>
 
                 <div className="mb-4">
@@ -222,7 +334,14 @@ const Animsaticilar = () => {
                     className="btn btn-secondary btn-lg"
                     onClick={() => {
                       setYeniAnimsatici('');
-                      setHedefTarih('');
+                      // Şu anki tarih-saati yeniden ayarla
+                      const now = new Date();
+                      const year = now.getFullYear();
+                      const month = String(now.getMonth() + 1).padStart(2, '0');
+                      const day = String(now.getDate()).padStart(2, '0');
+                      const hours = String(now.getHours()).padStart(2, '0');
+                      const minutes = String(now.getMinutes()).padStart(2, '0');
+                      setHedefTarih(`${year}-${month}-${day}T${hours}:${minutes}`);
                     }}
                     disabled={!yeniAnimsatici.trim() && !hedefTarih}
                   >

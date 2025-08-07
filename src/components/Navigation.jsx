@@ -18,15 +18,8 @@ const Navigation = ({ aktifSekme, setAktifSekme }) => {
       id: 'animsaticilar', 
       baslik: 'Anımsatıcılar', 
       ikon: '📝',
-      aciklama: 'Not listesi',
+      aciklama: 'Not listesi ve sesli kayıt',
       renk: 'primary'
-    },
-    { 
-      id: 'ses-kayit', 
-      baslik: 'Ses Kayıt', 
-      ikon: '🎤',
-      aciklama: 'Sesle not al',
-      renk: 'success'
     },
     { 
       id: 'ocr', 

@@ -15,6 +15,63 @@ const OCR = () => {
   const [basariliMesaj, setBasariliMesaj] = useState('');
   const fileInputRef = useRef(null);
 
+  // Türkçe karakter düzeltme sözlüğü
+  const karakterDuzeltmeleri = {
+    // Sık karşılaşılan OCR hataları
+    'ğ': /[gq]/g,
+    'ı': /[i1l|]/g,
+    'ş': /[s]/g,
+    'ç': /[c]/g,
+    'ü': /[u]/g,
+    'ö': /[o]/g,
+    'İ': /[I1l|]/g,
+    // Yaygın kelime hataları
+    'bugün': /bug[iıl1]n|bug[iıl1]+n/gi,
+    'bugün': /bugun/gi,
+    'için': /[iıl1]ç[iıl1]n|icin/gi,
+    'şimdi': /s[iıl1]md[iıl1]|simdi/gi,
+    'yarın': /yar[iıl1]n|yarin/gi,
+    'geldi': /geld[iıl1]|geldi/gi,
+    'gitti': /g[iıl1]tt[iıl1]|gitti/gi,
+  };
+
+  // Metin düzeltme fonksiyonu
+  const metniDuzelt = (rawText) => {
+    if (!rawText) return '';
+
+    let duzeltilmisMetin = rawText;
+
+    // 1. Karakter düzeltmeleri
+    Object.keys(karakterDuzeltmeleri).forEach(dogruKelime => {
+      const regex = karakterDuzeltmeleri[dogruKelime];
+      duzeltilmisMetin = duzeltilmisMetin.replace(regex, dogruKelime);
+    });
+
+    // 2. Satır temizleme
+    const temizMetin = duzeltilmisMetin
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => {
+        // Tamamen boş satırları çıkar
+        if (line.length === 0) return false;
+        
+        // Sadece tek karakter olanları çıkar (çok kısa)
+        if (line.length === 1 && !line.match(/[a-zA-ZçÇğĞıIİöÖşŞüÜ0-9]/)) return false;
+        
+        // Sadece noktalama işaretlerinden oluşan uzun satırları çıkar
+        if (line.length > 3 && /^[^\w\s]+$/.test(line)) return false;
+        
+        // Çok fazla noktalama işareti olanları çıkar
+        if (line.length > 0 && (line.match(/[^\w\s]/g) || []).length / line.length > 0.5) return false;
+        
+        return true;
+      })
+      .join('\n')
+      .trim();
+
+    return temizMetin;
+  };
+
   // Resim seçildiğinde
   const handleImageSelect = (event) => {
     const file = event.target.files[0];
@@ -42,8 +99,30 @@ const OCR = () => {
         }
       });
 
+      // OCR ayarlarını optimize et - daha iyi yazı tanıma için
+      await worker.setParameters({
+        tessedit_pageseg_mode: '6', // PSM 6: Uniform block of text (tek blok metin)
+        tessedit_ocr_engine_mode: '1', // OEM 1: Neural nets LSTM only (daha iyi)
+        preserve_interword_spaces: '1', // Kelimeler arası boşlukları koru
+        tessedit_do_invert: '0', // Görüntü inversiyonu yapma
+        tessedit_write_images: '0', // Debug görüntüleri yazma
+        user_defined_dpi: '300', // DPI ayarı
+        textord_really_old_xheight: '0', // Yeni x-height hesaplaması
+        classify_enable_adaptive_matcher: '1', // Uyarlanabilir eşleyici
+        classify_enable_learning: '1', // Öğrenmeyi etkinleştir
+        textord_noise_area_ratio: '0.3', // Gürültü oranını düşür
+        textord_noise_sizelimit: '0.2', // Gürültü boyut sınırını düşür
+        textord_heavy_nr: '1', // Ağır gürültü temizleme
+        language_model_penalty_non_freq_dict_word: '0.1', // Sözlükte olmayan kelimeler için düşük ceza
+        language_model_penalty_non_dict_word: '0.15', // Sözlükte olmayan kelimeler
+      });
+
       const { data: { text } } = await worker.recognize(selectedImage);
-      setExtractedText(text);
+      
+      // Metni düzelt ve temizle
+      const temizMetin = metniDuzelt(text);
+
+      setExtractedText(temizMetin);
       await worker.terminate();
     } catch (error) {
       console.error('OCR işlemi sırasında hata:', error);
@@ -293,6 +372,10 @@ const OCR = () => {
                           <span className="me-2">💡</span>
                           İyi aydınlatılmış fotoğraflar tercih edin
                         </li>
+                        <li className="mb-2 text-muted">
+                          <span className="me-2">🚫</span>
+                          <strong>Optimize edildi</strong> - gereksiz karakterler azaltıldı
+                        </li>
                       </ul>
                     </Col>
                     <Col md={6}>
@@ -308,6 +391,10 @@ const OCR = () => {
                         <li className="mb-2 text-muted">
                           <span className="me-2">✏️</span>
                           Sonucu düzenleyebilirsiniz
+                        </li>
+                        <li className="mb-2 text-muted">
+                          <span className="me-2">🔍</span>
+                          <strong>Yüksek doğruluk</strong> için net resimler kullanın
                         </li>
                       </ul>
                     </Col>
